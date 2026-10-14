@@ -21,7 +21,7 @@ Generate locally on your own GPU, in ComfyUI, or with hosted models.
 [![Discord][discord-shield]][discord-url]
 [![Reddit][reddit-shield]][reddit-url]
 
-<img width="1590" alt="Inline Studio Screenshot" src="https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/hero.png" />
+<img width="1590" alt="Omnichar Studio screenshot" src="https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/hero.png" />
 
 </div>
 
@@ -88,12 +88,12 @@ rem If the CUDA build is wrong for your card, name the index yourself:
 ```
 
 On NVIDIA, `--install` reads your GPU's compute capability and pulls the matching CUDA build of
-PyTorch, RTX 50-series included. Everything lands in `core/.venv`, which Inline Studio owns; an
+PyTorch, RTX 50-series included. Everything lands in `core/.venv`, which Omnichar owns; an
 environment already activated in your shell is never touched. Re-running `--install` is safe, and
 it is also how you update: it upgrades the prebuilt web UI package, so `git pull` followed by
 `--install` moves both halves forward.
 
-Both versions are printed at launch, and Inline Studio checks PyPI once a day in the background and
+Both versions are printed at launch, and Omnichar checks PyPI once a day in the background and
 says so when either half is behind:
 
 ```
@@ -107,7 +107,7 @@ Set `INLINE_NO_UPDATE_CHECK=1` to skip the check.
 Prefer pip? `pip install -r requirements.txt` from the repo root installs the whole app from PyPI,
 then run `inline-studio`.
 
-[**No GPU? Deploy Inline Studio on RunPod →**](https://console.runpod.io/hub/template/c0qkyaypuv)
+[**No GPU? Deploy Omnichar on RunPod →**](https://console.runpod.io/hub/template/c0qkyaypuv)
 
 <details>
 <summary><b>Hardware support, RTX 50-series, AMD ROCm, Apple Silicon</b></summary>
@@ -226,7 +226,7 @@ dropdown.
 
 [**Workflow: Minimax H3. Consistent face, body & cloths via reference identity →**](https://omnichar.org/workflows/minimax-h3-guided-consistent-characters-via-reference-identity-face-body-cloths)
 
-Drop in a photo or two and Inline Studio compiles a **`.char`**: one portable file holding your
+Drop in a photo or two and Omnichar compiles a **`.char`**: one portable file holding your
 references and an identity fingerprint. Describe the scene, and the references carry the likeness.
 On MiniMax H3 the same person moves and speaks, in video with sound. Every take comes back with a
 continuity score out of 100, so drift shows up as a number. On a clip the score carries the worst
@@ -255,7 +255,7 @@ nodes sit on the same canvas as everything else: wire them up, press Start, watc
 finished `.safetensors` lands in `models/loras/`, where the LoRA loader node picks it up, so you can
 generate with it straight away.
 
-![Inline Studio showing the LoRA training node graph with a dataset, live logs, and a loss curve](https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/lora-trainer.png)
+![Omnichar showing the LoRA training node graph with a dataset, live logs, and a loss curve](https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/lora-trainer.png)
 
 ```
 [ Load Dataset ] --> [ Caption ] --> [ Train LoRA ] --> [ Graph ]
@@ -422,7 +422,7 @@ into one archive: inputs, outputs and the graph that turned one into the other, 
 can re-run the pipeline exactly. Video Director, Trim Video and Trim Audio nodes cut the result into
 a sequence.
 
-![Inline Studio dashboard with recent projects](https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/screenshot-dashboard.png)
+![Omnichar dashboard with recent projects](https://raw.githubusercontent.com/omnichar/OmniChar/main/screenshots/screenshot-dashboard.png)
 
 It runs as a single process on one port: the Inline Core engine (Python) serves the web UI and does
 the generation. No desktop install, no separate backend. For the engineering story see
@@ -445,19 +445,30 @@ Browse the [registry](https://github.com/omnichar/Inline-Registry), or copy the
 
 ## FAQ
 
-**Is Inline Studio free?** Yes, free and open source under GPL-3.0. Local generation and training
+**Is Omnichar free?** Yes, free and open source under GPL-3.0. Local generation and training
 cost nothing to run. Hosted models are billed by the provider.
 
-**Do I need a GPU?** Not for the canvas, planning, editing or hosted models. Local generation and
-LoRA training need one; see the table at the top.
+**What is a `.char` file?** One portable file holding a character: your reference photos, an
+identity fingerprint, a locked description, any adapter trained from the same photos, and a voice
+clip if you add one. It is not tied to this app. The [ComfyUI custom node](https://github.com/omnichar/ComfyUI-Omnichar)
+reads the same file, and a character built there opens in the Characters panel here.
 
-**Can I train a LoRA locally?** Yes, for all six local models, on your own GPU. See
-[TRAINING.md](TRAINING.md).
+**Which models take a character?** FLUX.2 and MiniMax H3 Reference to Video read the references
+directly, with nothing to train. Krea 2 and H3's other nodes have no reference channel, so they
+take an adapter trained once from the same photos. On fal, Nano Banana Pro and H3 Reference to
+Video take one too. Seedance 2.0 rejects any reference with a face in it, so a character reaches it
+as build and wardrobe only. See [Characters](#characters).
+
+**Do I need a GPU?** Not for the canvas, planning, editing or hosted models, and not for
+[Omnichar Cloud](https://cloud.omnichar.org), which runs in the browser. Local generation and LoRA
+training need one; see the table at the top.
+
+**Can I train a LoRA locally?** Yes, for all six local models, on your own GPU: stills for the image
+models, and short clips too for MiniMax H3 and LTX-2.5. The training nodes sit on the same canvas as everything else. See [TRAINING.md](TRAINING.md).
 
 **What models can I run?** Locally: Z-Image Turbo, FLUX.1, FLUX.2, Krea 2, MiniMax H3 and
-LTX-2.5. Hosted:
-the fal catalogue, with more providers to follow. Adding a new local model is a Core change, not a
-UI release.
+LTX-2.5. Hosted: the fal catalogue, with more providers to follow. Adding a new local model is a
+Core change, not a UI release.
 
 **The UI is a blank page on Windows.** You are on a build older than v1.3.0. A clean Windows install
 maps `.js` to `text/plain` in the registry, Python honours that, and browsers will not run a module
@@ -469,7 +480,7 @@ Issues, ideas and pull requests are all welcome. Start with [CONTRIBUTING.md](CO
 setup and the checks to run; [CLAUDE.md](CLAUDE.md) is the deeper engineering guide. By taking part
 you agree to our [Code of Conduct](CODE_OF_CONDUCT.md).
 
-Want to help by using it for real? We run a **paid trial feedback program**: use Inline Studio on
+Want to help by using it for real? We run a **paid trial feedback program**: use Omnichar on
 your own work, tell us what helps and what gets in the way, and get paid for your time. Come say hi
 on [Discord](https://discord.gg/cSUS88VdY9), or try the [creator task](task.md).
 
