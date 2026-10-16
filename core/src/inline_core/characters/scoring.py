@@ -198,6 +198,102 @@ def detect_face(image: Any) -> tuple[Any, float] | None:
     return (bgr, best)
 
 
+def detect_faces(image: Any) -> tuple[Any, list[Any]]:
+    """Every confident face as YuNet rows, left to right, which is the order a cast is placed in."""
+    bgr = _to_bgr(image)
+    height, width = bgr.shape[:2]
+    scale = _DETECT_SIZE / max(width, height)
+    if scale < 1.0:
+        import cv2
+
+        bgr = cv2.resize(bgr, (int(width * scale), int(height * scale)))
+        height, width = bgr.shape[:2]
+    try:
+        _, faces = _yunet(width, height).detect(bgr)
+    except Exception as error:  # noqa: BLE001 - a detector failure must not break a score
+        logger.warning("Face detection failed: %s", error)
+        return bgr, []
+    if faces is None:
+        return bgr, []
+    rows = [row for row in faces if float(row[14]) >= FACE_CONFIDENCE]
+    return bgr, sorted(rows, key=lambda row: float(row[0]) + float(row[2]) / 2)
+
+
+def embed_faces(image: Any) -> list[list[float]]:
+    """An SFace embedding per detected face, left to right; a face that fails to embed is empty."""
+    bgr, rows = detect_faces(image)
+    out: list[list[float]] = []
+    for row in rows:
+        try:
+            model = _sface()
+            feature = model.feature(model.alignCrop(bgr, row))
+            out.append([float(v) for v in feature.reshape(-1)])
+        except Exception as error:  # noqa: BLE001 - never let scoring break the caller
+            logger.warning("Face embedding failed: %s", error)
+            out.append([])
+    return out
+
+
+#: How much better, in summed percent, the best assignment must be than the asked-for placement
+#: before it is called a swap. Uncalibrated: the render gate sets it from same-cast spread.
+SWAP_MARGIN = 10.0
+
+#: Faces considered for assignment; past this a crowd adds cases, not answers.
+MAX_ASSIGNED_FACES = 8
+
+
+def assign_faces(similarity: list[list[float]]) -> list[int | None]:
+    """Each character's face index, one face each; brute force, as 5 over 8 faces is 6720 cases."""
+    from itertools import permutations
+
+    characters = len(similarity)
+    faces = len(similarity[0]) if characters else 0
+    if not characters or not faces:
+        return [None] * characters
+    # A crowd is cut to the faces most like anyone in the cast, so the search stays bounded.
+    columns = sorted(range(faces), key=lambda f: -max(row[f] for row in similarity))
+    candidates = sorted(columns[:MAX_ASSIGNED_FACES])
+    best: tuple[float, list[int | None]] = (-1.0, [None] * characters)
+    slots: list[int | None] = [*candidates, *([None] * max(0, characters - len(candidates)))]
+    for order in permutations(slots, characters):
+        total = sum(similarity[c][f] for c, f in enumerate(order) if f is not None)
+        if total > best[0]:
+            best = (total, list(order))
+    return best[1]
+
+
+def score_faces(
+    embeddings: list[list[float]], galleries: list[list[list[float]]]
+) -> dict[str, Any]:
+    """Per-character best-match face scores in cast order, plus who looks swapped."""
+    similarity = [
+        [
+            max((to_percent(cosine(face, ref)) for ref in gallery if ref), default=0.0)
+            if face
+            else 0.0
+            for face in embeddings
+        ]
+        for gallery in galleries
+    ]
+    assigned = assign_faces(similarity)
+    scores = [
+        similarity[c][f] if f is not None else None for c, f in enumerate(assigned)
+    ]
+    swapped: list[int] = []
+    # Only when every character has a face to stand in: otherwise the asked-for order is unknown.
+    if len(embeddings) == len(galleries) and len(galleries) > 1:
+        intended = sum(similarity[c][c] for c in range(len(galleries)))
+        found = sum(s for s in scores if s is not None)
+        if found - intended >= SWAP_MARGIN:
+            swapped = [c for c, f in enumerate(assigned) if f is not None and f != c]
+    return {
+        "scores": scores,
+        "faces": assigned,
+        "unmatched": max(0, len(embeddings) - sum(1 for f in assigned if f is not None)),
+        "swapped": swapped,
+    }
+
+
 def face_crop(image: Any, margin: float = 0.35) -> Any | None:
     """A square crop around the detected face, in the original image's pixels, or None."""
     found = detect_face(image)

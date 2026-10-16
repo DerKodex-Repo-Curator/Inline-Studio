@@ -125,13 +125,16 @@ export const useGenerationStore = create<GenerationState>((set) => ({
         }
         // Compiled in Core, which owns reference ordering, the role split and the numbering; the
         // browser only knows how many slots the wired images already took.
-        const characterFile = resolved.value.character ?? undefined
+        // The whole cast: sending only its first renders a stranger beside the character.
+        const castFiles = resolved.value.characters ?? []
+        const characterFile = castFiles[0] ?? resolved.value.character ?? undefined
         if (def.character && characterFile) {
           const wired = portMedia(def, inputs, def.character.port).length
           const excluded = def.character.excludeRoles ?? []
           const voicePort = def.character.voicePort
           const applied = await studio().characters.applyFal({
             file: characterFile,
+            ...(castFiles.length > 1 ? { files: castFiles } : {}),
             limit: Math.min(def.character.maxRefs, def.character.maxImages - wired),
             firstPosition: wired + 1,
             style: def.character.style,

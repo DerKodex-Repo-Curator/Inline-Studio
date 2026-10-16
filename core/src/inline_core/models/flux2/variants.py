@@ -61,6 +61,9 @@ class Flux2Variant:
     arch: str
     steps: int
     guidance: float
+    #: References a cast may fill. 4 matches the hosted Klein edit endpoint; the render gate
+    #: measures each variant, and dev may take more.
+    max_references: int = 4
 
     @property
     def supports_negative_prompt(self) -> bool:

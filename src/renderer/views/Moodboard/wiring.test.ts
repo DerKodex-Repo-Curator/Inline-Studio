@@ -20,6 +20,15 @@ const DESCRIPTORS = [
     ],
     outputs: [{ id: 'image', label: 'Image', kind: 'image' }],
   },
+  {
+    type: 'black-forest-labs/flux-2',
+    inputs: [
+      { id: 'prompt', label: 'Prompt', kind: 'text' },
+      { id: 'image', label: 'Reference image(s)', kind: 'image[]' },
+      { id: 'character', label: 'Characters', kind: 'character[]' },
+    ],
+    outputs: [{ id: 'image', label: 'Image', kind: 'image' }],
+  },
 ] as unknown as NodeDescriptor[]
 
 function item(id: string, type: string, coreType?: string): MoodboardItem {
@@ -36,6 +45,7 @@ const ITEMS = [
   item('enc', 'core', 'character/encode'),
   item('gen', 'core', 'alibaba/z-image-turbo'),
   item('space', 'controlSpace'),
+  item('flux', 'core', 'black-forest-labs/flux-2'),
 ]
 
 describe('canWire', () => {
@@ -153,6 +163,28 @@ describe('a character wire onto a fal node', () => {
       canWire(
         { source: 'gen', target: 'fal', sourceHandle: 'image', targetHandle: 'character' },
         FAL,
+        DESCRIPTORS,
+      ),
+    ).toBe(false)
+  })
+})
+
+describe('a character wire onto a cast port', () => {
+  it('reaches a Core node that takes several characters', () => {
+    expect(
+      canWire(
+        { source: 'enc', target: 'flux', sourceHandle: 'character', targetHandle: 'character' },
+        ITEMS,
+        DESCRIPTORS,
+      ),
+    ).toBe(true)
+  })
+
+  it("still cannot land on that node's image list", () => {
+    expect(
+      canWire(
+        { source: 'enc', target: 'flux', sourceHandle: 'character', targetHandle: 'image' },
+        ITEMS,
         DESCRIPTORS,
       ),
     ).toBe(false)

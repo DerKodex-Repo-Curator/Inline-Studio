@@ -420,12 +420,16 @@ export interface ResolvedFalInputs {
   prompt: string | null
   /** The `.char` filename wired into the node's Character port, or null when none is. */
   character: string | null
+  /** Every `.char` on that port, in wire order - the order the prompt numbers them in. */
+  characters: string[]
 }
 
 /** What one endpoint needs a character normalised to, so `characters:applyFal` can compile it. */
 export interface FalCharacterRequest {
   /** The `.char` filename, as `ResolvedFalInputs.character` reported it. */
   file: string
+  /** The whole cast in wire order, when more than one is wired. `file` is its first. */
+  files?: string[]
   /** Reference slots left for the character after the wired images. */
   limit: number
   /** The position its first reference lands on in the request's image list, 1-based. */

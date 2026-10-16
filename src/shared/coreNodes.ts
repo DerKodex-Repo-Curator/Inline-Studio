@@ -23,6 +23,7 @@ export type PortKind =
   | 'latent'
   | 'control'
   | 'character'
+  | 'character[]'
   | 'payload'
   | 'payload[]'
   | 'dataset'
@@ -172,6 +173,7 @@ export function portsSatisfy(source: PortKind, target: PortKind): boolean {
   if (source === target) return true
   if (source === 'image' && target === 'image[]') return true
   if (source === 'payload' && target === 'payload[]') return true
+  if (source === 'character' && target === 'character[]') return true
   // A control input accepts any image output (a raw image, a preprocessed control map, or a
   // Control Space render); the control map is just an image.
   return source === 'image' && target === 'control'
@@ -192,6 +194,7 @@ const PORT_COLORS: Record<PortKind, string> = {
   latent: '#60a5fa',
   control: '#f9a8d4',
   character: '#f0abfc',
+  'character[]': '#f0abfc',
   payload: '#93c5fd',
   'payload[]': '#93c5fd',
   dataset: '#38bdf8',

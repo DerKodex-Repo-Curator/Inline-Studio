@@ -91,7 +91,8 @@ def test_the_flux2_node_takes_a_character_by_wire() -> None:
     """A wire, not a name typed into the node, so the graph shows which identity a render used."""
     runner = pytest.importorskip("inline_core.models.flux2.runner")
     port = next(p for p in runner.FLUX2.inputs if p.id == "character")
-    assert port.kind is PortKind.CHARACTER
+    # A list, so a cast of several arrives in wire order; one wire is still a cast of one.
+    assert port.kind is PortKind.CHARACTER_LIST
     assert port.required is False, "a character is optional; most renders have none"
     assert not any(f.key == "character" for f in runner.FLUX2.params), "the dropdown is gone"
 
@@ -100,7 +101,7 @@ def test_the_krea2_node_takes_a_character_by_wire() -> None:
     runner = pytest.importorskip("inline_core.models.krea2.runner")
     for descriptor in runner.DESCRIPTORS.values():
         port = next(p for p in descriptor.inputs if p.id == "character")
-        assert port.kind is PortKind.CHARACTER
+        assert port.kind is PortKind.CHARACTER_LIST
         assert not any(f.key == "character" for f in descriptor.params)
 
 

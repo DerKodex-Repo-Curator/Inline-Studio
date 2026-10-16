@@ -30,6 +30,9 @@ class PortKind(str, Enum):
     # A saved identity and the per-model artefacts compiled from it. A character is opaque like an
     # engine handle, but unlike one it names a file on disk that outlives the run.
     CHARACTER = "character"
+    # A generation node's cast: several characters, in wire order, which is the order the prompt
+    # numbers them in.
+    CHARACTER_LIST = "character[]"
     PAYLOAD = "payload"
     PAYLOAD_LIST = "payload[]"
     # A training dataset, by id. Like a character it outlives the run; unlike one it is a DB row.
@@ -55,6 +58,8 @@ def port_satisfies(source: PortKind, target: PortKind) -> bool:
     if source is PortKind.IMAGE and target is PortKind.IMAGE_LIST:
         return True
     if source is PortKind.PAYLOAD and target is PortKind.PAYLOAD_LIST:
+        return True
+    if source is PortKind.CHARACTER and target is PortKind.CHARACTER_LIST:
         return True
     # a control input accepts any image output (the control map is just an image)
     return source is PortKind.IMAGE and target is PortKind.CONTROL

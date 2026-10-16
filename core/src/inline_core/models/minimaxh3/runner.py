@@ -29,7 +29,9 @@ from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase
 from ...runtime.store import TakeStore
 from ...takes import AssetRef
+from .. import cast_params
 from .. import pipeline_runtime as rt
+from ..cast_params import cast_param_fields
 from ..references import ReferenceKind, ReferenceLimits, collect_references, describe
 from ..video_params import VideoGrid, snap_canvas, snap_frames, video_param_fields
 
@@ -134,6 +136,7 @@ def _params(variant: Variant) -> tuple[ParamField, ...]:
                 ),
             )
         )
+        fields.extend(cast_param_fields())
     fields.append(
         ParamField(
             "model", "Diffusion model", Widget.SELECT, "",
@@ -165,7 +168,7 @@ def _inputs(variant: Variant) -> tuple[Port, ...]:
         Port("lora", "LoRA", PortKind.LORA, required=False),
         # Every variant takes one: the reference partition applies it by compiled references, the
         # rest by its trained adapter, which is the only route on a node with no reference channel.
-        Port("character", "Character", PortKind.CHARACTER, required=False),
+        Port("character", "Characters", PortKind.CHARACTER_LIST, required=False),
     ]
     if variant.first_frame:
         ports.append(Port("image", "First frame", PortKind.IMAGE, required=False))
@@ -306,6 +309,9 @@ def _apply_character(
     inputs: dict[str, list[Any]], variant: Variant, params: dict[str, Any]
 ) -> _Character | None:
     """A wired character as references or as its adapter, or None when none is wired."""
+    names = cast_params.character_files(inputs)
+    if len(names) > 1:
+        return _apply_cast(names, inputs, variant, params)
     chosen = _character_file(inputs)
     if not chosen:
         return None
@@ -401,6 +407,56 @@ def _apply_character(
             else None
         ),
     )
+
+
+def _apply_cast(
+    names: list[str], inputs: dict[str, list[Any]], variant: Variant, params: dict[str, Any]
+) -> _Character:
+    """Two or more characters as references only: H3 cannot tell whose voice is whose."""
+    from ...characters import apply as characters
+    from ...characters import cast
+    from ...characters import charfile as cf
+    from ...characters import voice as vc
+
+    if not variant.references:
+        raise ComponentError(
+            f"{variant.title} takes one character, by its adapter. Wire several into MiniMax H3 "
+            "Reference to Video instead."
+        )
+    wired = len([v for v in (inputs.get("references") or []) if v is not None])
+    budget = int(params.get("character_references") or REFERENCE_LIMITS.max_images)
+    slots = max(0, min(budget, REFERENCE_LIMITS.max_images - wired))
+    keep = None if params.get("character_reference_roles", "all") == "all" else (cf.ROLE_FACE,)
+    try:
+        applied = cast.apply_cast(
+            names,
+            ARCH,
+            budget=slots,
+            mode=cast_params.cast_mode(params),
+            keep_roles=keep,
+            sheet=cast_params.sheet_options(params),
+        )
+    except cast.CastError as error:
+        raise ComponentError(str(error)) from error
+    prompt = rt.first_str(inputs.get("prompt")) or ""
+    notice = ""
+    voice_mode = params.get("character_voice", vc.VOICE_AUTO)
+    if vc.wanted(voice_mode, prompt) and any(characters.has_voice(n) for n in names):
+        notice = "Voice not applied: a voice needs a single character"
+    prefix = applied.prompt_prefix(
+        wired + 1, style="token", role_lines=bool(params.get("character_role_lines"))
+    )
+    # Same channel as the voice notice above: a prompt cut at the encoder changes the render
+    # without changing the request, so it is said rather than logged.
+    overflow = cast.overflow_notice(prefix, prompt)
+    if overflow:
+        logger.warning(overflow)
+        notice = f"{notice} {overflow}".strip()
+    logger.info(
+        "Applying a cast of %d as %s in %d reference(s), beside %d wired",
+        len(names), applied.mode, len(applied.refs), wired,
+    )
+    return _Character(refs=applied.refs, prefix=prefix, notice=notice)
 
 
 def _sounding_videos(inputs: dict[str, list[Any]]) -> int:

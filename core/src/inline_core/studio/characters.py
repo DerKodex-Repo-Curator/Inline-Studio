@@ -14,6 +14,7 @@ from typing import Any, cast
 from ..characters import apply, encode, library, scoring, weights
 from ..characters import charfile as cf
 from ..characters import voice as vc
+from ..characters.sheet import SheetOptions
 
 logger = logging.getLogger("inline_core.studio.characters")
 
@@ -162,6 +163,33 @@ def _score_video(
     return out
 
 
+def _cast_summary(
+    names: list[str], labels: list[str], results: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Per-frame cast scores folded into one per character; a missing face is never a zero."""
+    if not results:
+        return None
+    per: list[dict[str, Any]] = []
+    for index, (file, name) in enumerate(zip(names, labels, strict=True)):
+        values = [float(r["scores"][index]) for r in results if r["scores"][index] is not None]
+        swapped = sum(1 for r in results if index in r["swapped"])
+        per.append(
+            {
+                "file": file,
+                "name": name,
+                "score": round(sum(values) / len(values), 1) if values else None,
+                "missingFrames": len(results) - len(values),
+                "swappedFrames": swapped,
+            }
+        )
+    return {
+        "perCharacter": per,
+        "swapped": [p["file"] for p in per if p["swappedFrames"]],
+        "unmatched": max(int(r["unmatched"]) for r in results),
+        "frames": len(results),
+    }
+
+
 class Characters:
     """The `characters:*` channels, backed by ``models/characters/``."""
 
@@ -219,7 +247,15 @@ class Characters:
         """References as data URIs plus the prompt naming them, composed where the rules live."""
         from .fal import file_to_data_uri
 
-        file = str(request.get("file") or "").strip()
+        raw_files = request.get("files")
+        files = (
+            [str(f).strip() for f in cast(list[Any], raw_files) if str(f).strip()]
+            if isinstance(raw_files, list)
+            else []
+        )
+        if len(files) > 1:
+            return self._apply_fal_cast(files, request)
+        file = files[0] if files else str(request.get("file") or "").strip()
         if not file:
             raise ValueError("No character was wired into that node.")
         limit = int(request.get("limit") or 0)
@@ -272,6 +308,44 @@ class Characters:
         if applied.voice is not None:
             result["voice"] = file_to_data_uri(applied.voice)
         return result
+
+    def _apply_fal_cast(self, files: list[str], request: dict[str, Any]) -> dict[str, Any]:
+        """Two or more characters for one hosted request, references only: no voice binds."""
+        from ..characters import cast as cast_mod
+        from .fal import file_to_data_uri
+
+        raw_roles = request.get("keepRoles")
+        keep = tuple(str(r) for r in raw_roles) if raw_roles is not None else None
+        raw_sheet = request.get("sheet")
+        sheet = cast(dict[str, Any], raw_sheet) if isinstance(raw_sheet, dict) else {}
+        applied = cast_mod.apply_cast(
+            files,
+            encode.FAL_REF_ARCH,
+            budget=int(request.get("limit") or 0),
+            mode=str(request.get("mode") or "auto"),
+            keep_roles=keep,
+            sheet=SheetOptions(
+                captions=bool(sheet.get("captions", True)),
+                split=bool(sheet.get("split", False)),
+                faces_only=bool(sheet.get("facesOnly", False)),
+            ),
+        )
+        roles = (
+            [cf.ROLE_FACE] * len(applied.refs)
+            if applied.mode == "sheet"
+            else [role for member in applied.members for role in member.roles]
+        )
+        return {
+            "name": ", ".join(member.name for member in applied.members),
+            "names": [member.name for member in applied.members],
+            "mode": applied.mode,
+            "refs": [file_to_data_uri(Path(ref.path or "")) for ref in applied.refs],
+            "roles": roles,
+            "promptPrefix": applied.prompt_prefix(
+                int(request.get("firstPosition") or 1),
+                style=str(request.get("style") or "ordinal"),
+            ),
+        }
 
     def sweep_result(self, run_id: str) -> dict[str, Any]:
         """A sweep's findings, so a node still reports them after the page reloads."""
@@ -355,6 +429,48 @@ class Characters:
             return {**result, "gallery": gallery} if result else result
         except Exception as error:  # noqa: BLE001 - scoring is never worth failing a render over
             logger.warning("Could not score %s against %s: %s", image_path, chosen, error)
+            return None
+
+    def score_cast(
+        self, image_path: Path | str, names: list[str], frames: int = SCORE_FRAMES
+    ) -> dict[str, Any] | None:
+        """Each cast member's face score, faces matched one-to-one, swaps flagged. Never raises."""
+        try:
+            galleries: list[list[list[float]]] = []
+            labels: list[str] = []
+            for index, chosen in enumerate(names):
+                path = library.resolve(chosen)
+                if path is None:
+                    return None
+                doc = cf.read(path)
+                if index == 0:
+                    # One encoder build for the whole cast: similarity across two means nothing.
+                    scoring.use_encoders_from(doc.manifest.scoring)
+                if self._scoring_stale(doc.manifest):
+                    doc = self._rescore(path, doc)
+                face_refs, _subject_refs, _gallery = self._gallery(doc)
+                gallery = [v for v in face_refs if v]
+                if not gallery:
+                    centroids = scoring.load_centroids(
+                        doc.members, doc.manifest.scoring.get("centroids") or {}
+                    )
+                    centroid = centroids.get(scoring.SFACE_ID)
+                    gallery = [centroid] if centroid else []
+                galleries.append(gallery)
+                labels.append(doc.manifest.name or path.stem)
+            from PIL import Image
+
+            source = Path(image_path)
+            images: list[Any]
+            if source.suffix.lower() in _VIDEO_SUFFIXES:
+                images = [image for _seconds, image in _sample_frames(source, frames)]
+            else:
+                with Image.open(source) as handle:
+                    images = [handle.convert("RGB")]
+            results = [scoring.score_faces(scoring.embed_faces(i), galleries) for i in images]
+            return _cast_summary(names, labels, results)
+        except Exception as error:  # noqa: BLE001 - scoring is never worth failing a render over
+            logger.warning("Could not score %s against the cast %s: %s", image_path, names, error)
             return None
 
     def _gallery(

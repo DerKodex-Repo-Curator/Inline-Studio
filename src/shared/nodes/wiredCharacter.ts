@@ -1,4 +1,4 @@
-/** Mirrors `studio/fal.py::wired_character`, for pricing only - the run still resolves it in Core. */
+/** Mirrors `studio/fal.py::wired_characters`, for pricing only - the run still resolves it in Core. */
 import type { MoodboardConnector, MoodboardItem } from '../types'
 
 /** Where each node that can name an already-saved character keeps it. */
@@ -7,12 +7,13 @@ const CHARACTER_FILE_PARAM: Record<string, string> = {
   'character/write': 'filename',
 }
 
-/** The `.char` a node's Character port is fed by, or null. */
-export function wiredCharacterFile(
+/** Every `.char` on a node's Character port, in wire order - the order the prompt numbers them. */
+export function wiredCharacterFiles(
   itemId: string,
   connectors: MoodboardConnector[],
   items: MoodboardItem[],
-): string | null {
+): string[] {
+  const files: string[] = []
   for (const c of connectors) {
     if (c.toItemId !== itemId) continue
     if ((c.data?.targetHandle as string | undefined) !== 'character') continue
@@ -26,7 +27,16 @@ export function wiredCharacterFile(
       .split('/')
       .pop()
       ?.trim()
-    if (name) return name.toLowerCase().endsWith('.char') ? name : `${name}.char`
+    if (name) files.push(name.toLowerCase().endsWith('.char') ? name : `${name}.char`)
   }
-  return null
+  return files
+}
+
+/** The first of them, for a caller that can only carry one. */
+export function wiredCharacterFile(
+  itemId: string,
+  connectors: MoodboardConnector[],
+  items: MoodboardItem[],
+): string | null {
+  return wiredCharacterFiles(itemId, connectors, items)[0] ?? null
 }
