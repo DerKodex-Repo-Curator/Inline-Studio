@@ -49,7 +49,7 @@ export function canWire(
   if (srcKind && tgtKind && !portsSatisfy(srcKind, tgtKind)) return false
   // Checked without a target kind too, because most fal handles have none: a character carries a
   // filename rather than media, so anywhere else it would resolve to nothing at render time.
-  if (srcKind === 'character' && tgtKind !== 'character') return false
+  if (srcKind === 'character' && tgtKind !== 'character' && tgtKind !== 'character[]') return false
 
   const sourceIsText = source?.type === 'prompt'
   // By kind, not by handle name: a Core node's text input can be called anything (Encode

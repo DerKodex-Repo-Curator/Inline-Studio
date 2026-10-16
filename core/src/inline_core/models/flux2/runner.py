@@ -39,8 +39,9 @@ from ...media import MediaKind
 from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase
 from ...runtime.store import TakeStore
-from .. import loaders
+from .. import cast_params, loaders
 from .. import pipeline_runtime as rt
+from ..cast_params import cast_param_fields
 from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
 from . import embeds
 from . import requirements as reqs
@@ -79,7 +80,7 @@ FLUX2 = NodeDescriptor(
         # A character arrives by wire, never as a name typed into this node, so the graph shows
         # which identity a render used. Its references are appended to whatever else is wired and
         # its locked description is prepended to the prompt, naming their positions.
-        Port("character", "Character", PortKind.CHARACTER, required=False),
+        Port("character", "Characters", PortKind.CHARACTER_LIST, required=False),
     ),
     outputs=(Port("image", "Image", PortKind.IMAGE),),
     params=(
@@ -104,6 +105,7 @@ FLUX2 = NodeDescriptor(
         ParamField("control_strength", "Control strength", Widget.NUMBER, 0.75,
                    min=0.0, max=2.0, step=0.05),
         ParamField("seed", "Seed (-1 = random)", Widget.SEED, -1),
+        *cast_param_fields(),
         # Normally identified from the checkpoint's tensor shapes and served as the default, so this
         # only needs overriding for a file whose name hides whether it is a base or distilled build
         # (the one thing shapes cannot tell apart). A pick that contradicts the file is ignored.
@@ -208,10 +210,20 @@ class Flux2Runner(NodeRunner):
         # A character's references are appended, never prepended: the numbered strip on the node
         # face is built from wired connectors and cannot see these, so leading them would shift
         # every number the user can see away from the number the prompt resolves.
-        character = _apply_character(inputs, len(refs))
+        character = _apply_character(inputs, len(refs), variant, params)
+        cast_names: list[str] = list(character.names) if character is not None else []
+        cast_notice = ""
         if character is not None:
             refs.extend(character.refs)
             prompt = character.prefix + prompt
+            if len(character.names) > 1:
+                from ...characters.cast import overflow_notice
+
+                # Told to the caller, not only the log: a prompt silently cut at the encoder is
+                # the one thing here that changes the render without changing the request.
+                cast_notice = overflow_notice(character.prefix, prompt[len(character.prefix):])
+                if cast_notice:
+                    logger.warning(cast_notice)
             if character.lora is not None:
                 # Appended, so a user's own wired LoRAs still apply alongside the character's.
                 loras = (*loras, LoraRef(file=str(character.lora), strength=character.strength))
@@ -407,6 +419,8 @@ class Flux2Runner(NodeRunner):
         rt.free_vram()  # return fragmented free blocks to the driver (keeps the model resident)
 
         save_status = "Saving…" + (f" (peak VRAM {peak_gb:.1f}GB)" if peak_gb else "")
+        if cast_notice:
+            save_status = f"{save_status} {cast_notice}"
         ctx.emitter.emit(rt.progress_event(ctx, node, Phase.SAVE, 1.0, status=save_status))
         take = self._store.save(
             ctx.run_id,
@@ -426,7 +440,13 @@ class Flux2Runner(NodeRunner):
                 "seed": seed,
                 **({"references": len(images)} if images else {}),
                 # Studio reads this back to decide whether to score the take for continuity.
-                **({"character": _character_file(inputs)} if character else {}),
+                **({"character": cast_names[0]} if cast_names else {}),
+                # A cast is scored per character; `character` alone would score the first only.
+                **(
+                    {"characters": cast_names, "cast_mode": character.mode}
+                    if character is not None and len(cast_names) > 1
+                    else {}
+                ),
                 **(
                     {"controlnet": control_file,
                      "control_strength": float(params.get("control_strength", 0.75))}
@@ -550,27 +570,16 @@ def _resolve_negative(params: dict[str, Any], variant: V.Flux2Variant) -> str | 
 
 
 
-def _character_file(inputs: dict[str, Any]) -> str:
-    """The wired character's filename. Applying resolves payloads through a content-keyed cache, so
-    an identity that has not been written yet cannot be applied."""
-    wired = (inputs.get("character") or [None])[0]
-    if wired is None:
-        return ""
-    name = str(getattr(wired, "file", "") or "")
-    if not name:
-        raise ValueError(
-            "That character has not been saved yet. Wire it through Write .char first."
-        )
-    return name
-
-
 @dataclass(frozen=True)
 class _Character:
+    names: tuple[str, ...]
     refs: list[Any]
     prefix: str
     #: The trained adapter, when the character is applied that way instead of by reference.
     lora: Any = None
     strength: float = 1.0
+    #: How a cast was placed (refs, face-each or sheet); empty for one character.
+    mode: str = ""
 
 
 def _character_select(inputs: dict[str, Any]) -> Any:
@@ -583,27 +592,68 @@ def _character_select(inputs: dict[str, Any]) -> Any:
     return getattr(wired, "select", None) if wired is not None else None
 
 
-def _apply_character(inputs: dict[str, Any], wired: int) -> _Character | None:
-    """A wired character's references and prompt prefix, or None when none is wired.
+def _character_file(inputs: dict[str, Any]) -> str:
+    """The first wired character's filename, or empty when none is wired."""
+    names = cast_params.character_files(inputs)
+    return names[0] if names else ""
+
+
+def _apply_character(
+    inputs: dict[str, Any],
+    wired: int,
+    variant: V.Flux2Variant | None = None,
+    params: dict[str, Any] | None = None,
+) -> _Character | None:
+    """The wired cast's references and prompt prefix, or None when no character is wired.
 
     ``wired`` is how many references the user already supplied, because the prefix has to name the
-    positions the character's own references will land on.
+    positions the characters' own references will land on.
     """
-    chosen = _character_file(inputs)
+    chosen = cast_params.character_files(inputs)
     if not chosen:
         return None
+    if len(chosen) > 1:
+        # Klein's limit when no variant is known: the smallest any variant starts at.
+        return _apply_cast(chosen, wired, variant or V.VARIANTS[0], params or {})
     from ...characters import apply as characters
 
-    applied = characters.char_apply(chosen, select=_character_select(inputs))
+    applied = characters.char_apply(chosen[0], select=_character_select(inputs))
     if applied is None or (not applied.refs and applied.lora is None):
         return None
     how = "adapter" if applied.lora is not None else f"{len(applied.refs)} reference(s)"
     logger.info("Applying character %s by %s", applied.name, how)
     return _Character(
+        names=(chosen[0],),
         refs=list(applied.refs),
         prefix=applied.prompt_prefix(wired + 1),
         lora=applied.lora,
         strength=applied.lora_strength,
+    )
+
+
+def _apply_cast(
+    chosen: list[str], wired: int, variant: V.Flux2Variant, params: dict[str, Any]
+) -> _Character:
+    """Two or more characters, fitted to this variant's reference limit; never by adapter."""
+    from ...characters import cast, encode
+
+    applied = cast.apply_cast(
+        chosen,
+        encode.FLUX2_KLEIN_ARCH,
+        budget=variant.max_references - wired,
+        mode=cast_params.cast_mode(params),
+        sheet=cast_params.sheet_options(params),
+    )
+    logger.info(
+        "Applying a cast of %d (%s) as %s in %d reference(s), beside %d wired",
+        len(chosen), ", ".join(m.name for m in applied.members), applied.mode,
+        len(applied.refs), wired,
+    )
+    return _Character(
+        names=tuple(chosen),
+        refs=list(applied.refs),
+        prefix=applied.prompt_prefix(wired + 1),
+        mode=applied.mode,
     )
 
 

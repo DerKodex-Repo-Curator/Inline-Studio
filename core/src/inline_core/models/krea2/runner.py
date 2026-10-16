@@ -30,7 +30,7 @@ from ...media import MediaKind
 from ...runtime.context import ExecutionContext
 from ...runtime.progress import Phase
 from ...runtime.store import TakeStore
-from .. import loaders
+from .. import cast_params, loaders
 from .. import pipeline_runtime as rt
 from ..comfy_int8 import quantization_for
 from ..sampling import SamplingFamily, apply_sampling, sampling_param_fields
@@ -68,7 +68,11 @@ def _descriptor(variant: str) -> NodeDescriptor:
             Port("image", "Image (img2img)", PortKind.IMAGE, required=False),
             Port("control_image", "Depth control", PortKind.CONTROL, required=False),
             # Krea 2 has no reference channel, so a character applies only as its trained adapter.
-            Port("character", "Character", PortKind.CHARACTER, required=False),
+            # Several stack one adapter each, which is unproven until a render shows no blending.
+            Port(
+                "character", "Characters (several is experimental)", PortKind.CHARACTER_LIST,
+                required=False,
+            ),
         ),
         outputs=(Port("image", "Image", PortKind.IMAGE),),
         params=(
@@ -170,8 +174,8 @@ class Krea2Runner(NodeRunner):
         character = _apply_character(inputs)
         if character is not None:
             prompt = character.prefix + prompt
-            # Appended, so a user's own wired LoRAs still apply alongside the character's.
-            loras = (*loras, LoraRef(file=str(character.lora), strength=character.strength))
+            # Appended, so a user's own wired LoRAs still apply alongside the characters'.
+            loras = (*loras, *(LoraRef(file=str(f), strength=w) for f, w in character.loras))
         wired = {ref.kind for ref in (model_ref, vae_ref, te_ref) if ref is not None}
 
         missing = [
@@ -387,30 +391,44 @@ _CHARACTER_ARCH = "krea2"
 
 @dataclass(frozen=True)
 class _Character:
-    lora: Any
+    #: One ``(adapter file, strength)`` per character, in wire order.
+    loras: tuple[tuple[Any, float], ...]
     prefix: str
-    strength: float = 1.0
 
 
 def _apply_character(inputs: dict[str, Any]) -> _Character | None:
-    """A wired character's adapter and prompt text, or None when none is wired or trained."""
-    wired = (inputs.get("character") or [None])[0]
-    if wired is None:
+    """The wired characters' adapters and prompt text, or None when none is wired or trained."""
+    names = cast_params.character_files(inputs)
+    if not names:
         return None
-    chosen = str(getattr(wired, "file", "") or "")
-    if not chosen:
-        raise ValueError(
-            "That character has not been saved yet. Wire it through Write .char first."
-        )
     from ...characters import apply as characters
 
-    applied = characters.char_apply(chosen, _CHARACTER_ARCH)
+    if len(names) > 1:
+        from ...characters import cast
+
+        try:
+            stacked = cast.apply_adapters(names, _CHARACTER_ARCH)
+        except cast.CastError as error:
+            raise ComponentError(str(error)) from error
+        logger.warning(
+            "Stacking %d character adapters on Krea 2 is experimental: faces may blend.",
+            len(names),
+        )
+        return _Character(
+            loras=tuple((m.lora, m.lora_strength) for m in stacked.members),
+            prefix=stacked.prompt_prefix(),
+        )
+    applied = characters.char_apply(names[0], _CHARACTER_ARCH)
     if applied is None or applied.lora is None:
-        logger.info("Character %s has no Krea 2 adapter yet; generating without it.", chosen)
-        return None
+        # Refused rather than rendered without, which is what a cast of two already does: dropping
+        # the character silently returns a stranger under the name the caller asked for.
+        raise ComponentError(
+            f"{names[0]} has no {_CHARACTER_ARCH} adapter, and this model takes a character only "
+            "by adapter. Train one, or unwire it."
+        )
     logger.info("Applying character %s by adapter", applied.name)
     return _Character(
-        lora=applied.lora, prefix=applied.prompt_prefix(1), strength=applied.lora_strength
+        loras=((applied.lora, applied.lora_strength),), prefix=applied.prompt_prefix(1)
     )
 
 

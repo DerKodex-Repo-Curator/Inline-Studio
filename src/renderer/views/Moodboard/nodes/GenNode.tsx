@@ -19,7 +19,7 @@ import {
 } from '../../../lib/dnd'
 import { useCharacterStore } from '../../../store/characterStore'
 import { useMediaContextMenu } from '../../../lib/mediaContextMenu'
-import { wiredCharacterFile } from '@shared/nodes/wiredCharacter'
+import { wiredCharacterFiles } from '@shared/nodes/wiredCharacter'
 import {
   clipScoreLabel,
   clipScoreTitle,
@@ -201,9 +201,13 @@ export function GenNode({ id, data, selected }: NodeProps): React.JSX.Element {
     const port = def.character?.port
     if (!port) return inputs.length
     const wiredOnPort = inputs.filter((i) => i.handle === port || !i.handle).length
-    const chosen = characterWired ? wiredCharacterFile(id, connectors, items) : null
-    const summary = chosen ? characters.find((c) => c.file === chosen) : undefined
-    const fromCharacter = summary ? Math.min(summary.refs, def.character?.maxRefs ?? 0) : 0
+    // Every character on the port: counting the first alone quoted one and billed for the cast.
+    const chosen = characterWired ? wiredCharacterFiles(id, connectors, items) : []
+    const refs = chosen.reduce(
+      (total, file) => total + (characters.find((c) => c.file === file)?.refs ?? 0),
+      0,
+    )
+    const fromCharacter = Math.min(refs, def.character?.maxRefs ?? 0)
     return Math.min(wiredOnPort + fromCharacter, def.character?.maxImages ?? Infinity)
   })()
   const pct = typeof progress === 'number' ? Math.round(progress * 100) : null

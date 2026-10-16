@@ -76,8 +76,13 @@ def resolve_fal_inputs(conn: Any, folder: Path, frame_id: str) -> dict[str, Any]
         "audios": audios,
         "byHandle": by_handle,
         "prompt": mb.prompt_text_for_frame(conn, frame_id),
-        "character": wired_character(conn, frame_id),
+        # `character` stays the first, so a browser that predates casts keeps working.
+        **_cast_fields(wired_characters(conn, frame_id)),
     }
+
+
+def _cast_fields(names: list[str]) -> dict[str, Any]:
+    return {"character": names[0] if names else None, "characters": names}
 
 
 #: Where each node that can name an *already saved* character keeps that name. Load picks one, Write
@@ -86,13 +91,20 @@ _CHARACTER_FILE_PARAM = {"character/load": "file", "character/write": "filename"
 
 
 def wired_character(conn: Any, frame_id: str) -> str | None:
-    """The `.char` on this frame's Character port, off the connector: inputs hold only media."""
+    """The first `.char` on this frame's Character port, for a caller that scores one."""
+    names = wired_characters(conn, frame_id)
+    return names[0] if names else None
+
+
+def wired_characters(conn: Any, frame_id: str) -> list[str]:
+    """Every `.char` on this frame's Character port, in wire order: the order the prompt numbers."""
     board = mb.list_board(conn)
     items = board["items"]
     item_id = next((i["id"] for i in items if i.get("frameId") == frame_id), None)
     if item_id is None:
-        return None
+        return []
     by_id = {i["id"]: i for i in items}
+    names: list[str] = []
     for connector in board["connectors"]:
         if connector["toItemId"] != item_id:
             continue
@@ -109,8 +121,8 @@ def wired_character(conn: Any, frame_id: str) -> str | None:
             )
         chosen = library.target_name((core.get("params") or {}).get(key))
         if chosen:
-            return chosen
-    return None
+            names.append(chosen)
+    return names
 
 
 # --- output parsing (the standard fal response shapes) -------------------------------------------

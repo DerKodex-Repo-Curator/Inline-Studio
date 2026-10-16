@@ -79,7 +79,7 @@ def test_every_node_takes_a_character(node_type: str) -> None:
     """The reference partition applies one by compiled references and the rest by its trained
     adapter, so one `.char` serves the whole family rather than only the node that reads images."""
     port = {p.id: p for p in DESCRIPTORS[node_type].inputs}.get("character")
-    assert port is not None and port.kind is PortKind.CHARACTER
+    assert port is not None and port.kind is PortKind.CHARACTER_LIST
     assert not port.required
 
 

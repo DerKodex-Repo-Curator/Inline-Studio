@@ -248,6 +248,10 @@ class CoreGeneration:
         chosen = str(params.get("character") or "").strip()
         if not chosen or self._characters is None:
             return {}
+        listed: list[Any] = list(params.get("characters") or [])
+        cast = [str(n) for n in listed if str(n).strip()]
+        if len(cast) > 1:
+            return self._cast_continuity(cast, path)
         result = self._characters.score_take(path, chosen)
         if result is None:
             # Measured nothing. Record the character anyway so the UI can say which one was used.
@@ -262,6 +266,19 @@ class CoreGeneration:
         # from five, and the reader cannot tell them apart from the number.
         if result.get("frames"):
             out["continuityFrames"] = result["frames"]
+        return out
+
+    def _cast_continuity(self, cast: list[str], path: Path) -> dict[str, Any]:
+        """The worst member's score as the headline, beside every member's own and any swaps."""
+        result = self._characters.score_cast(path, cast)
+        if result is None:
+            return {"characterId": cast[0]}
+        scores = [p["score"] for p in result["perCharacter"] if p["score"] is not None]
+        out: dict[str, Any] = {"characterId": cast[0], "castContinuity": result}
+        if scores:
+            # The weakest member, because a cast is only as continuous as its least-held face.
+            out["continuityScore"] = min(scores)
+            out["continuityFaceOnly"] = True
         return out
 
     def _save_take(self, item_id: str, take: Any, ref: Any) -> None:
