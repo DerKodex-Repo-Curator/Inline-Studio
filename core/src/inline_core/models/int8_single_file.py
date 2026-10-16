@@ -35,8 +35,11 @@ def load_single_file(
     from diffusers.loaders.single_file_model import SINGLE_FILE_LOADABLE_CLASSES
 
     reader, name = _open(file)
-    specs = {k.removeprefix(_COMFY_PREFIX): v for k, v in int8_layers_of(reader, name).items()}
-    state = {key.removeprefix(_COMFY_PREFIX): reader.get_tensor(key) for key in reader.keys()}
+    # Through one handle: this reads a whole checkpoint, and reopening per tensor is a round trip
+    # each on network storage.
+    with reader:
+        specs = {k.removeprefix(_COMFY_PREFIX): v for k, v in int8_layers_of(reader, name).items()}
+        state = {key.removeprefix(_COMFY_PREFIX): reader.get_tensor(key) for key in reader.keys()}
     # The converter drops every scale but the int8 ones, so an fp8 layer's would vanish silently.
     stray = [k for k in state if k.endswith(SCALE_SUFFIX) and k[: -len(SCALE_SUFFIX)] not in specs]
     if stray:

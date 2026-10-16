@@ -12,7 +12,9 @@ safetensors directly.
 
 from __future__ import annotations
 
+import io
 import json
+import os
 import struct
 from pathlib import Path
 from typing import Any
@@ -74,6 +76,7 @@ class CheckpointReader:
 
     def __init__(self, path: str | Path) -> None:
         self._path = Path(path)
+        self._handle: io.BufferedReader | None = None
         try:
             size = self._path.stat().st_size
             with self._path.open("rb") as handle:
@@ -117,10 +120,7 @@ class CheckpointReader:
             )
         start, end = entry["data_offsets"]
         buffer = bytearray(end - start)
-        with self._path.open("rb") as handle:
-            handle.seek(self._start + start)
-            if handle.readinto(buffer) != len(buffer):
-                raise ComponentError(f"Checkpoint {self._path.name} is truncated at {key!r}.")
+        self._read_into(buffer, self._start + start, key)
         target = getattr(torch, dtype_name)
         if dtype_name.startswith("float8"):
             tensor = torch.frombuffer(buffer, dtype=torch.uint8).view(target)
@@ -129,8 +129,38 @@ class CheckpointReader:
         tensor = tensor.reshape(entry["shape"]) if entry["shape"] else tensor.reshape(())
         return tensor.to(device) if device else tensor
 
+    def _read_into(self, buffer: bytearray, offset: int, key: str) -> None:
+        """One range through the held handle: reopening per tensor is a round trip each time."""
+        if self._handle is not None:
+            read = self._read_from(self._handle, buffer, offset)
+        else:
+            with self._path.open("rb") as handle:
+                read = self._read_from(handle, buffer, offset)
+        if read != len(buffer):
+            raise ComponentError(f"Checkpoint {self._path.name} is truncated at {key!r}.")
+
+    @staticmethod
+    def _read_from(handle: io.BufferedReader, buffer: bytearray, offset: int) -> int:
+        handle.seek(offset)
+        return handle.readinto(buffer)
+
     def __enter__(self) -> CheckpointReader:
+        if self._handle is not None:
+            return self
+        try:
+            self._handle = self._path.open("rb")
+        except OSError as error:
+            raise ComponentError(f"Could not read checkpoint {self._path.name}: {error}") from error
+        # Advisory and Linux-only: it buys back the readahead the whole-file mapping used to give.
+        advise = getattr(os, "posix_fadvise", None)
+        if advise is not None:
+            try:
+                advise(self._handle.fileno(), 0, 0, os.POSIX_FADV_SEQUENTIAL)
+            except OSError:
+                pass
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        return None
+        handle, self._handle = self._handle, None
+        if handle is not None:
+            handle.close()

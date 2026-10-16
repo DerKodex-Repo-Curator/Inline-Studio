@@ -141,3 +141,27 @@ def test_an_unreadable_file_is_not_classified(tmp_path: Path) -> None:
     junk.write_bytes(b"\x00" * 32)
     assert checkpoint.prequantized_kind(junk) is None
     assert checkpoint.prequantized_kind(tmp_path / "missing.safetensors") is None
+
+
+def test_a_whole_checkpoint_is_read_through_one_open(tmp_path, monkeypatch) -> None:
+    """Reopening per tensor is free on a local disk and minutes on network storage."""
+    state = {f"t{i}": torch.zeros(4, dtype=torch.float32) for i in range(20)}
+    path = tmp_path / "many.safetensors"
+    safetensors.save_file(state, str(path), metadata={"format": "pt"})
+
+    opens = 0
+    real_open = Path.open
+
+    def counting_open(self, *args, **kwargs):
+        nonlocal opens
+        if self == path:
+            opens += 1
+        return real_open(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", counting_open)
+    with CheckpointReader(path) as reader:
+        # Counted from here, so the header read and the handle itself are not in the total.
+        opens = 0
+        for key in reader.keys():
+            reader.get_tensor(key)
+    assert opens == 0, f"re-opened the file {opens} times to read 20 tensors"
